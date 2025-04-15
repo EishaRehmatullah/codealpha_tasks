@@ -1,0 +1,521 @@
+//this file is incomplete... work on 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sudoku Solver</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        #sudoku-board {
+            display: grid;
+            grid-template-columns: repeat(9, 50px);
+            grid-template-rows: repeat(9, 50px);
+            gap: 1px;
+            border: 2px solid #000;
+            background-color: #000;
+            margin-bottom: 20px;
+        }
+        
+        .cell {
+            width: 50px;
+            height: 50px;
+            background-color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .cell input {
+            width: 100%;
+            height: 100%;
+            border: none;
+            text-align: center;
+            font-size: 20px;
+            font-weight: bold;
+            background-color: transparent;
+        }
+        
+        .cell input:focus {
+            outline: none;
+            background-color: #e3f2fd;
+        }
+        
+        /* Border styling for 3x3 boxes */
+        .cell-row-divider {
+            border-bottom: 2px solid #000;
+        }
+        
+        .cell-col-divider {
+            border-right: 2px solid #000;
+        }
+        
+        .original {
+            color: #2c3e50;
+            background-color: #ecf0f1;
+        }
+        
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            padding: 10px 15px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        #solve-btn {
+            background-color: #2ecc71;
+        }
+        
+        #solve-btn:hover {
+            background-color: #27ae60;
+        }
+        
+        #clear-btn {
+            background-color: #e74c3c;
+        }
+        
+        #clear-btn:hover {
+            background-color: #c0392b;
+        }
+        
+        .difficulty-btn {
+            background-color: #9b59b6;
+        }
+        
+        .difficulty-btn:hover, .difficulty-btn.active {
+            background-color: #8e44ad;
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            font-weight: bold;
+        }
+        
+        .error {
+            background-color: #ffecec;
+            color: #e74c3c;
+        }
+        
+        .success {
+            background-color: #eaffea;
+            color: #2ecc71;
+        }
+        
+        .info {
+            background-color: #e3f2fd;
+            color: #3498db;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sudoku Solver</h1>
+        
+        <div class="controls">
+            <button id="generate-btn">Generate Puzzle</button>
+            <button id="solve-btn">Solve</button>
+            <button id="clear-btn">Clear</button>
+            <button id="check-btn">Check Solution</button>
+        </div>
+        
+        <div class="controls">
+            <button class="difficulty-btn active" data-difficulty="easy">Easy</button>
+            <button class="difficulty-btn" data-difficulty="medium">Medium</button>
+            <button class="difficulty-btn" data-difficulty="hard">Hard</button>
+            <button class="difficulty-btn" data-difficulty="expert">Expert</button>
+        </div>
+        
+        <div id="sudoku-board"></div>
+        
+        <div id="status" class="status"></div>
+        <div id="loading" class="status info" style="display: none;">
+            Loading solver module...
+        </div>
+    </div>
+    
+    <script>
+        // WebAssembly module setup
+        let Module = {
+            onRuntimeInitialized: function() {
+                console.log('WebAssembly module initialized');
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('status').textContent = 'Solver ready!';
+                document.getElementById('status').className = 'status info';
+            }
+        };
+
+        let wasmModule; // Will be set to Module once loaded
+
+        // Sample puzzles of different difficulties
+        const samplePuzzles = {
+            easy: "1..489..636.1.4.9..9.3.5...75...3.8.....7.....2.5...89...8.9.2..2.7.3.951..542..7",
+            medium: "9.4...1.5.1.7..396......55...7.6.......8.3...2...9......6.3..5.1.3.2...7.4",
+            hard: "5.....6.........3.4.42....6....1.....5.83.7....6.....8....71.9.1.........4.....5",
+            expert: "8..........36......7..9.2...5...7.......457.....1...3...1....68..85...1..9....4.."
+        };
+        
+        // Current game state
+        let currentBoard = Array(9).fill().map(() => Array(9).fill(0));
+        let originalCells = new Set(); // To track cells that were in the original puzzle
+        let currentDifficulty = "easy";
+
+        // Create the Sudoku board
+        function createBoard() {
+            const board = document.getElementById('sudoku-board');
+            board.innerHTML = '';
+            
+            for (let i = 0; i < 9; i++) {
+                for (let j = 0; j < 9; j++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    
+                    // Add dividing lines for 3x3 boxes
+                    if (i === 2 || i === 5) {
+                        cell.classList.add('cell-row-divider');
+                    }
+                    if (j === 2 || j === 5) {
+                        cell.classList.add('cell-col-divider');
+                    }
+                    
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.maxLength = 1;
+                    input.dataset.row = i;
+                    input.dataset.col = j;
+                    
+                    // Only allow numbers 1-9
+                    input.addEventListener('input', (e) => {
+                        const value = e.target.value;
+                        if (value && (!/^[1-9]$/.test(value))) {
+                            e.target.value = '';
+                            return;
+                        }
+                        
+                        const row = parseInt(e.target.dataset.row);
+                        const col = parseInt(e.target.dataset.col);
+                        currentBoard[row][col] = value ? parseInt(value) : 0;
+                        
+                        // Clear status when user makes changes
+                        document.getElementById('status').textContent = '';
+                        document.getElementById('status').className = 'status';
+                    });
+                    
+                    // Keyboard navigation
+                    input.addEventListener('keydown', (e) => {
+                        const row = parseInt(e.target.dataset.row);
+                        const col = parseInt(e.target.dataset.col);
+                        
+                        switch (e.key) {
+                            case 'ArrowUp':
+                                if (row > 0) focusCell(row - 1, col);
+                                break;
+                            case 'ArrowDown':
+                                if (row < 8) focusCell(row + 1, col);
+                                break;
+                            case 'ArrowLeft':
+                                if (col > 0) focusCell(row, col - 1);
+                                break;
+                            case 'ArrowRight':
+                                if (col < 8) focusCell(row, col + 1);
+                                break;
+                        }
+                    });
+                    
+                    cell.appendChild(input);
+                    board.appendChild(cell);
+                }
+            }
+        }
+        
+        // Focus on a specific cell
+        function focusCell(row, col) {
+            const selector = `input[data-row="${row}"][data-col="${col}"]`;
+            const cell = document.querySelector(selector);
+            if (cell) {
+                cell.focus();
+            }
+        }
+        
+        // Fill the board with a puzzle string
+        function fillBoard(puzzleString) {
+            originalCells.clear();
+            currentBoard = Array(9).fill().map(() => Array(9).fill(0));
+            
+            const cells = document.querySelectorAll('.cell input');
+            let index = 0;
+            
+            for (let i = 0; i < 9; i++) {
+                for (let j = 0; j < 9; j++) {
+                    const cellIndex = i * 9 + j;
+                    const cell = cells[cellIndex];
+                    const value = puzzleString[index++];
+                    
+                    if (value === '.' || value === '0') {
+                        cell.value = '';
+                        cell.disabled = false;
+                        cell.parentElement.classList.remove('original');
+                        currentBoard[i][j] = 0;
+                    } else {
+                        cell.value = value;
+                        cell.disabled = true;
+                        cell.parentElement.classList.add('original');
+                        currentBoard[i][j] = parseInt(value);
+                        originalCells.add(`${i},${j}`);
+                    }
+                }
+            }
+        }
+        
+        // Generate a new puzzle
+        function generatePuzzle() {
+            // Get the active difficulty button
+            const activeDifficultyBtn = document.querySelector('.difficulty-btn.active');
+            const difficulty = activeDifficultyBtn ? activeDifficultyBtn.dataset.difficulty : 'easy';
+            
+            const puzzleString = samplePuzzles[difficulty];
+            fillBoard(puzzleString);
+            
+            document.getElementById('status').textContent = `New ${difficulty} puzzle generated!`;
+            document.getElementById('status').className = 'status info';
+        }
+        
+        // Solve the puzzle using WebAssembly module
+        async function solvePuzzle() {
+            if (!Module._solveSudoku) {
+                document.getElementById('status').textContent = 'Solver module not loaded!';
+                document.getElementById('status').className = 'status error';
+                return;
+            }
+            
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('loading').textContent = 'Solving puzzle...';
+            
+            const boardString = getBoardString();
+            
+            // Use setTimeout to give the UI a chance to update
+            setTimeout(() => {
+                try {
+                    const resultPtr = Module.ccall(
+                        'solveSudoku',
+                        'number',
+                        ['string'],
+                        [boardString]
+                    );
+                    
+                    const result = Module.UTF8ToString(resultPtr);
+                    
+                    // Free the allocated memory
+                    Module.ccall('freeMemory', null, ['number'], [resultPtr]);
+                    
+                    if (result && result.length === 81) {
+                        fillBoard(result);
+                        document.getElementById('status').textContent = 'Puzzle solved successfully!';
+                        document.getElementById('status').className = 'status success';
+                    } else {
+                        document.getElementById('status').textContent = 'No solution exists for this puzzle!';
+                        document.getElementById('status').className = 'status error';
+                    }
+                } catch (err) {
+                    console.error('Error solving puzzle:', err);
+                    document.getElementById('status').textContent = 'Error solving puzzle!';
+                    document.getElementById('status').className = 'status error';
+                }
+                
+                document.getElementById('loading').style.display = 'none';
+            }, 100);
+        }
+        
+        // Get the current board as a string
+        function getBoardString() {
+            let result = '';
+            for (let i = 0; i < 9; i++) {
+                for (let j = 0; j < 9; j++) {
+                    result += currentBoard[i][j] || '.';
+                }
+            }
+            return result;
+        }
+        
+        // Check if the board is valid
+        function isValidBoard() {
+            // Check rows
+            for (let row = 0; row < 9; row++) {
+                const seen = new Set();
+                for (let col = 0; col < 9; col++) {
+                    const num = currentBoard[row][col];
+                    if (num !== 0) {
+                        if (seen.has(num)) {
+                            document.getElementById('status').textContent = `Duplicate number ${num} in row ${row + 1}`;
+                            document.getElementById('status').className = 'status error';
+                            return false;
+                        }
+                        seen.add(num);
+                    }
+                }
+            }
+            
+            // Check columns
+            for (let col = 0; col < 9; col++) {
+                const seen = new Set();
+                for (let row = 0; row < 9; row++) {
+                    const num = currentBoard[row][col];
+                    if (num !== 0) {
+                        if (seen.has(num)) {
+                            document.getElementById('status').textContent = `Duplicate number ${num} in column ${col + 1}`;
+                            document.getElementById('status').className = 'status error';
+                            return false;
+                        }
+                        seen.add(num);
+                    }
+                }
+            }
+            
+            // Check 3x3 boxes
+            for (let boxRow = 0; boxRow < 3; boxRow++) {
+                for (let boxCol = 0; boxCol < 3; boxCol++) {
+                    const seen = new Set();
+                    for (let i = 0; i < 3; i++) {
+                        for (let j = 0; j < 3; j++) {
+                            const row = boxRow * 3 + i;
+                            const col = boxCol * 3 + j;
+                            const num = currentBoard[row][col];
+                            if (num !== 0) {
+                                if (seen.has(num)) {
+                                    document.getElementById('status').textContent = `Duplicate number ${num} in box at position (${boxRow + 1},${boxCol + 1})`;
+                                    document.getElementById('status').className = 'status error';
+                                    return false;
+                                }
+                                seen.add(num);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return true;
+        }
+        
+        // Check if the board is complete (no empty cells)
+        function isBoardComplete() {
+            for (let i = 0; i < 9; i++) {
+                for (let j = 0; j < 9; j++) {
+                    if (currentBoard[i][j] === 0) {
+                        document.getElementById('status').textContent = 'Board is not complete. Fill all cells.';
+                        document.getElementById('status').className = 'status error';
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        
+        // Clear the board (keep original cells)
+        function clearBoard() {
+            const cells = document.querySelectorAll('.cell input');
+            
+            for (let i = 0; i < 9; i++) {
+                for (let j = 0; j < 9; j++) {
+                    const cellKey = `${i},${j}`;
+                    if (!originalCells.has(cellKey)) {
+                        const cellIndex = i * 9 + j;
+                        const cell = cells[cellIndex];
+                        cell.value = '';
+                        currentBoard[i][j] = 0;
+                    }
+                }
+            }
+            
+            document.getElementById('status').textContent = 'Board cleared!';
+            document.getElementById('status').className = 'status info';
+        }
+        
+        // Check the solution
+        function checkSolution() {
+            if (!isValidBoard()) {
+                return;
+            }
+            
+            if (!isBoardComplete()) {
+                return;
+            }
+            
+            document.getElementById('status').textContent = 'Congratulations! Your solution is correct!';
+            document.getElementById('status').className = 'status success';
+        }
+        
+        // Initialize the app
+        window.onload = function() {
+            document.getElementById('loading').style.display = 'block';
+            createBoard();
+            
+            // Event listeners for buttons
+            document.getElementById('generate-btn').addEventListener('click', generatePuzzle);
+            document.getElementById('solve-btn').addEventListener('click', solvePuzzle);
+            document.getElementById('clear-btn').addEventListener('click', clearBoard);
+            document.getElementById('check-btn').addEventListener('click', checkSolution);
+            
+            // Event listeners for difficulty buttons
+            const difficultyBtns = document.querySelectorAll('.difficulty-btn');
+            difficultyBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    difficultyBtns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentDifficulty = btn.dataset.difficulty;
+                });
+            });
+            
+            // Set WebAssembly module once it's loaded
+            if (typeof Module !== 'undefined') {
+                wasmModule = Module;
+            }
+            
+            // Generate a puzzle on load
+            generatePuzzle();
+        };
+    </script>
+    
+    <script src="sudoku.js"></script>
+</body>
+</html>
